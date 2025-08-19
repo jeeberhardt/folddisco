@@ -155,8 +155,9 @@ pub fn retrieval_wrapper_for_foldcompdb(
     multiple_bin: &Option<Vec<(usize, usize)>>, dist_cutoff: f32,
     query_map: &HashMap<GeometricHash, ((usize, usize), bool)>,
     query_structure: &CompactStructure, all_query_indices: &Vec<usize>,
-    aa_dist_map: &HashMap<(u8, u8), Vec<(f32, usize)>>,
-    ca_distance_cutoff: f32, foldcomp_db_reader: &FoldcompDbReader,
+    aa_dist_map: &HashMap<(Vec<u8>, Vec<u8>), Vec<(f32, usize)>>,
+    ca_distance_cutoff: f32, partial_fit: bool,
+    foldcomp_db_reader: &FoldcompDbReader,
 ) -> (Vec<(Vec<ResidueMatch>, f32, [[f32; 3]; 3], [f32; 3], Vec<Coordinate>)>, 
       Vec<(Vec<ResidueMatch>, f32, [[f32; 3]; 3], [f32; 3], Vec<Coordinate>)>, usize, f32) {
     let compact = foldcomp_db_reader.read_single_structure_by_id(db_key).expect("Error reading structure from foldcomp db");
@@ -233,11 +234,11 @@ pub fn retrieval_wrapper_for_foldcompdb(
         all_query_indices.iter().for_each(|&i| {
             // If i is in query_indices, get the corresponding retrieved index
             count_map.clear();
-            if query_indices.contains(&i) {
-                let index = query_indices.iter().position(|&x| x == i).unwrap();
-                let (chain, res_ind) = get_chain_and_res_ind(&compact, retrieved_indices[index]);
-                res_vec_from_hash.push(Some((chain, res_ind)));
-                if !retrieved_indices_scanned.contains(&retrieved_indices[index]) {
+            if let Some(&retrieved_index) = query_to_retrieved.get(&i) {
+                let (chain, res_ind) = get_chain_and_res_ind(&compact, retrieved_index);
+                res_vec_from_hash.push(Some((chain.clone(), res_ind)));
+                
+                if !retrieved_indices_scanned_set.contains(&retrieved_index) {
                     res_vec.push(Some((chain, res_ind)));
                     query_indices_scanned.push(i);
                     retrieved_indices_scanned.push(retrieved_index);
@@ -346,8 +347,8 @@ pub fn retrieval_wrapper(
     multiple_bin: &Option<Vec<(usize, usize)>>, dist_cutoff: f32,
     query_map: &HashMap<GeometricHash, ((usize, usize), bool)>,
     query_structure: &CompactStructure, all_query_indices: &Vec<usize>,
-    aa_dist_map: &HashMap<(u8, u8), Vec<(f32, usize)>>,
-    ca_distance_cutoff: f32,
+    aa_dist_map: &HashMap<(Vec<u8>, Vec<u8>), Vec<(f32, usize)>>,
+    ca_distance_cutoff: f32, partial_fit: bool,
 ) -> (Vec<(Vec<ResidueMatch>, f32, [[f32; 3]; 3], [f32; 3], Vec<Coordinate>)>, 
       Vec<(Vec<ResidueMatch>, f32, [[f32; 3]; 3], [f32; 3], Vec<Coordinate>)>, usize, f32) {
     // Load structure to retrieve motif
@@ -426,11 +427,11 @@ pub fn retrieval_wrapper(
         all_query_indices.iter().for_each(|&i| {
             // If i is in query_indices, get the corresponding retrieved index
             count_map.clear();
-            if query_indices.contains(&i) {
-                let index = query_indices.iter().position(|&x| x == i).unwrap();
-                let (chain, res_ind) = get_chain_and_res_ind(&compact, retrieved_indices[index]);
-                res_vec_from_hash.push(Some((chain, res_ind)));
-                if !retrieved_indices_scanned.contains(&retrieved_indices[index]) {
+            if let Some(&retrieved_index) = query_to_retrieved.get(&i) {
+                let (chain, res_ind) = get_chain_and_res_ind(&compact, retrieved_index);
+                res_vec_from_hash.push(Some((chain.clone(), res_ind)));
+                
+                if !retrieved_indices_scanned_set.contains(&retrieved_index) {
                     res_vec.push(Some((chain, res_ind)));
                     query_indices_scanned.push(i);
                     retrieved_indices_scanned.push(retrieved_index);
