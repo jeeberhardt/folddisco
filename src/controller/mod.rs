@@ -5,16 +5,16 @@
 // Author: Hyunbin Kim (khb7840@gmail.com)
 // Copyright © 2024 Hyunbin Kim, All rights reserved
 
+pub mod count_query;
 pub mod feature;
 pub mod filter;
 pub mod graph;
 pub mod io;
+pub mod map;
+pub mod mode;
 pub mod query;
 pub mod result;
 pub mod retrieve;
-pub mod count_query;
-pub mod map;
-pub mod mode;
 
 use std::cell::UnsafeCell;
 use std::io::Write;
@@ -41,7 +41,7 @@ const DEFAULT_MAX_RESIDUE: usize = 65535;
 const DEFAULT_DIST_CUTOFF: f32 = 20.0;
 
 // Module specific types
-pub type ResidueMatch = Option<(u8, u64)>;
+pub type ResidueMatch = Option<(Vec<u8>, u64)>;
 
 unsafe impl Send for FoldDisco {}
 unsafe impl Sync for FoldDisco {}

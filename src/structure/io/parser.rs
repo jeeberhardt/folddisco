@@ -8,7 +8,7 @@ pub fn parse_line(line: &String) -> Result<Atom, &str> {
     let z = line[46..54].trim().parse::<f32>();
     let atom_name = parse_atom(&line[12..16]);
     let atom_serial = line[6..11].trim().parse::<u64>();
-    let chain = line[21..22].as_bytes()[0];
+    let chain = line[21..22].as_bytes().to_vec();
     let res_name = parse_residue(&line[17..20]);
     let res_serial = line[22..26].trim().parse::<u64>();
     // If line contains 60..66, parse b_factor
@@ -26,6 +26,7 @@ pub fn parse_line(line: &String) -> Result<Atom, &str> {
         z,
         atom_name,
         atom_serial,
+        chain,
         res_name,
         res_serial,
         b_factor,
@@ -36,6 +37,7 @@ pub fn parse_line(line: &String) -> Result<Atom, &str> {
             Ok(z),
             Ok(atom_name),
             Ok(atom_serial),
+            chain,
             Ok(res_name),
             Ok(res_serial),
             Ok(b_factor),
@@ -117,7 +119,7 @@ mod parser_tests {
         let atom = parse_line(&line).unwrap();
         assert_eq!(atom.atom_name, [32, 78, 32, 32]); // N
         assert_eq!(atom.res_name, [65, 76, 65]); // ALA
-        assert_eq!(atom.chain, 65); // A
+        assert_eq!(atom.chain, vec![65]); // A
         assert_eq!(atom.atom_serial, 1); // 1
         assert_eq!(atom.res_serial, 340); // 340
         assert_eq!(atom.x, -2.311);

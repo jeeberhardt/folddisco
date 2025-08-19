@@ -1,12 +1,10 @@
 //!
 
 use std::fmt;
-pub mod parser;
 pub mod pdb;
 pub mod cif;
-
-#[cfg(feature = "foldcomp")]
 pub mod fcz;
+pub mod parser;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum StructureFileFormat {

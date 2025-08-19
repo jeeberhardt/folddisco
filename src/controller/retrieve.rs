@@ -47,7 +47,7 @@ pub fn retrieve_with_prefilter(
     compact: &CompactStructure, hash_set: &HashSet<GeometricHash>, prefilter: CombinationVecIterator,
     nbin_dist: usize, nbin_angle: usize, multiple_bin: &Option<Vec<(usize, usize)>>,
     dist_cutoff: f32, ca_distance_cutoff: f32,
-    query_aa_dist_map: &HashMap<(u8, u8), Vec<(f32, usize)>>,
+    query_aa_dist_map: &HashMap<(Vec<u8>, Vec<u8>), Vec<(f32, usize)>>,
 ) -> (Vec<(usize, usize, GeometricHash)>, Vec<(usize, (usize, usize))>) {
     let mut output: Vec<(usize, usize, GeometricHash)> = Vec::new();
     let mut candidate_pairs: Vec<(usize, (usize, usize))> = Vec::new();
@@ -61,8 +61,8 @@ pub fn retrieve_with_prefilter(
                 // Check distance & if it is within the threshold, add to candidate_pairs
                 let aa1 = map_aa_to_u8(&compact.residue_name[i]);
                 let aa2 = map_aa_to_u8(&compact.residue_name[j]);
-                if query_aa_dist_map.contains_key(&(aa1, aa2)) {
-                    let dists = query_aa_dist_map.get(&(aa1, aa2)).unwrap();
+                if query_aa_dist_map.contains_key(&(vec![aa1], vec![aa2])) {
+                    let dists = query_aa_dist_map.get(&(vec![aa1], vec![aa2])).unwrap();
                     let curr_dist = compact.get_ca_distance(i, j);
                     // If curr_dist is Some and within the threshold, add to candidate_pairs
                     if curr_dist.is_some() {
@@ -100,8 +100,8 @@ pub fn retrieve_with_prefilter(
                 // Check distance & if it is within the threshold, add to candidate_pairs
                 let aa1 = map_aa_to_u8(&compact.residue_name[i]);
                 let aa2 = map_aa_to_u8(&compact.residue_name[j]);
-                if query_aa_dist_map.contains_key(&(aa1, aa2)) {
-                    let dists = query_aa_dist_map.get(&(aa1, aa2)).unwrap();
+                if query_aa_dist_map.contains_key(&(vec![aa1], vec![aa2])) {
+                    let dists = query_aa_dist_map.get(&(vec![aa1], vec![aa2])).unwrap();
                     let curr_dist = compact.get_ca_distance(i, j);
                     // If curr_dist is Some and within the threshold, add to candidate_pairs
                     if curr_dist.is_some() {
@@ -127,7 +127,6 @@ pub fn retrieve_with_prefilter(
                         GeometricHash::perfect_hash(&feature, hash.hash_type(), nbin_dist, nbin_angle)
                     };
                     if hash_set.contains(&curr_hash) {
-                        // output.push((*i, *j));
                         output.push((i, j, curr_hash));
                     }
                 }
@@ -138,8 +137,8 @@ pub fn retrieve_with_prefilter(
 }
 
 
-pub fn get_chain_and_res_ind(compact: &CompactStructure, i: usize) -> (u8, u64) {
-    (compact.chain_per_residue[i], compact.residue_serial[i])
+pub fn get_chain_and_res_ind(compact: &CompactStructure, i: usize) -> (Vec<u8>, u64) {
+    (compact.chain_per_residue[i].clone(), compact.residue_serial[i])
 }
 pub fn res_index_to_char(chain: u8, res_ind: u64) -> String {
     format!("{}{}", chain as char, res_ind)
@@ -152,7 +151,7 @@ pub fn retrieval_wrapper_for_foldcompdb(
     multiple_bin: &Option<Vec<(usize, usize)>>, dist_cutoff: f32,
     query_map: &HashMap<GeometricHash, ((usize, usize), bool)>,
     query_structure: &CompactStructure, all_query_indices: &Vec<usize>,
-    aa_dist_map: &HashMap<(u8, u8), Vec<(f32, usize)>>,
+    aa_dist_map: &HashMap<(Vec<u8>, Vec<u8>), Vec<(f32, usize)>>,
     ca_distance_cutoff: f32, foldcomp_db_reader: &FoldcompDbReader,
 ) -> (Vec<(Vec<ResidueMatch>, f32, [[f32; 3]; 3], [f32; 3], Vec<Coordinate>)>, 
       Vec<(Vec<ResidueMatch>, f32, [[f32; 3]; 3], [f32; 3], Vec<Coordinate>)>, usize, f32) {
@@ -229,7 +228,7 @@ pub fn retrieval_wrapper_for_foldcompdb(
             if query_indices.contains(&i) {
                 let index = query_indices.iter().position(|&x| x == i).unwrap();
                 let (chain, res_ind) = get_chain_and_res_ind(&compact, retrieved_indices[index]);
-                res_vec_from_hash.push(Some((chain, res_ind)));
+                res_vec_from_hash.push(Some((chain.clone(), res_ind)));
                 if !retrieved_indices_scanned.contains(&retrieved_indices[index]) {
                     res_vec.push(Some((chain, res_ind)));
                     query_indices_scanned.push(i);
@@ -330,7 +329,7 @@ pub fn retrieval_wrapper(
     multiple_bin: &Option<Vec<(usize, usize)>>, dist_cutoff: f32,
     query_map: &HashMap<GeometricHash, ((usize, usize), bool)>,
     query_structure: &CompactStructure, all_query_indices: &Vec<usize>,
-    aa_dist_map: &HashMap<(u8, u8), Vec<(f32, usize)>>,
+    aa_dist_map: &HashMap<(Vec<u8>, Vec<u8>), Vec<(f32, usize)>>,
     ca_distance_cutoff: f32,
 ) -> (Vec<(Vec<ResidueMatch>, f32, [[f32; 3]; 3], [f32; 3], Vec<Coordinate>)>, 
       Vec<(Vec<ResidueMatch>, f32, [[f32; 3]; 3], [f32; 3], Vec<Coordinate>)>, usize, f32) {
@@ -409,7 +408,7 @@ pub fn retrieval_wrapper(
             if query_indices.contains(&i) {
                 let index = query_indices.iter().position(|&x| x == i).unwrap();
                 let (chain, res_ind) = get_chain_and_res_ind(&compact, retrieved_indices[index]);
-                res_vec_from_hash.push(Some((chain, res_ind)));
+                res_vec_from_hash.push(Some((chain.clone(), res_ind)));
                 if !retrieved_indices_scanned.contains(&retrieved_indices[index]) {
                     res_vec.push(Some((chain, res_ind)));
                     query_indices_scanned.push(i);

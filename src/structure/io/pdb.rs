@@ -4,9 +4,9 @@ use std::path::Path;
 
 use flate2::read::GzDecoder;
 
+use crate::structure::atom::Atom;
 
 use super::super::core::*;
-use super::parser::*;
 use super::*;
 
 /// A PDB reader
@@ -18,7 +18,155 @@ pub struct Reader<R: io::Read> {
     pub input_type: StructureFileFormat,
 }
 
-// ??? trait Read -> impl Read for __ ???
+// Add a new error type for PDB parsing
+#[derive(Debug)]
+pub struct PDBParseError {
+    pub message: String,
+}
+
+impl std::fmt::Display for PDBParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl std::error::Error for PDBParseError {}
+
+// Helper to extract residue name as 3-char array, accepting numbers as valid
+fn parse_residue_name(resname: &str) -> [u8; 3] {
+    let bytes = resname.as_bytes();
+    match bytes.len() {
+        1 => [bytes[0], b' ', b' '],
+        2 => [bytes[0], bytes[1], b' '],
+        3 => [bytes[0], bytes[1], bytes[2]],
+        _ => [b' ', b' ', b' '],
+    }
+}
+
+// Helper to extract atom name as 4-char array, accepting short names as right-justified
+fn parse_atom_name(atom_name: &str) -> [u8; 4] {
+    let bytes = atom_name.as_bytes();
+    match bytes.len() {
+        1 => [b' ', b' ', b' ', bytes[0]],
+        2 => [b' ', b' ', bytes[0], bytes[1]],
+        3 => [b' ', bytes[0], bytes[1], bytes[2]],
+        4 => [bytes[0], bytes[1], bytes[2], bytes[3]],
+        _ => [b' ', b' ', b' ', b' '],
+    }
+}
+
+// Update parse_line to propagate errors and use consistent error messages
+fn parse_line(line: &str) -> Result<Atom, PDBParseError> {
+    // Example PDB ATOM line format:
+    // COLUMNS        DATA TYPE       FIELD         DEFINITION
+    // -------------------------------------------------------------------------------------
+    // 1 - 6         Record name     "ATOM  "
+    // 7 - 11        Integer         serial        Atom serial number.
+    // 13 - 16       Atom            name          Atom name.
+    // 17            Character       altLoc        Alternate location indicator.
+    // 18 - 20       Residue name    resName       Residue name.
+    // 22            Character       chainID       Chain identifier.
+    // 23 - 26       Integer         resSeq        Residue sequence number.
+    // 31 - 38       Real(8.3)       x             Orthogonal coordinates for X in Angstroms.
+    // 39 - 46       Real(8.3)       y             Orthogonal coordinates for Y in Angstroms.
+    // 47 - 54       Real(8.3)       z             Orthogonal coordinates for Z in Angstroms.
+    // 55 - 60       Real(6.2)       occupancy     Occupancy.
+    // 61 - 66       Real(6.2)       tempFactor    Temperature factor.
+    // 77 - 78       LString(2)      element       Element symbol, right-justified.
+    // 79 - 80       LString(2)      charge        Charge on the atom.
+
+    let atom_name = line.get(12..16).unwrap_or("").trim();
+    let residue_name = line.get(17..20).unwrap_or("").trim();
+    let chain_id = line.get(21..22).unwrap_or("").trim();
+    let residue_number = line.get(22..26).unwrap_or("").trim();
+    let x = line.get(30..38).unwrap_or("").trim();
+    let y = line.get(38..46).unwrap_or("").trim();
+    let z = line.get(46..54).unwrap_or("").trim();
+    let b_factor = line.get(60..66).unwrap_or("").trim();
+
+    // Consistent error reporting
+    let attempted_atom_name = if !atom_name.is_empty() { atom_name } else { "missing" };
+    let attempted_residue_name = if !residue_name.is_empty() { residue_name } else { "missing" };
+
+    if atom_name.is_empty() {
+        return Err(PDBParseError {
+            message: format!(
+                "Atom name missing in atom record (atom: '{}', residue: '{}')",
+                attempted_atom_name, attempted_residue_name
+            ),
+        });
+    }
+    if residue_name.is_empty() {
+        return Err(PDBParseError {
+            message: format!(
+                "Residue name missing in atom record (atom: '{}', residue: '{}')",
+                attempted_atom_name, attempted_residue_name
+            ),
+        });
+    }
+    if residue_number.is_empty() {
+        return Err(PDBParseError {
+            message: format!(
+                "Residue number missing in atom record (atom: '{}', residue: '{}')",
+                attempted_atom_name, attempted_residue_name
+            ),
+        });
+    }
+    if chain_id.is_empty() {
+        return Err(PDBParseError {
+            message: format!(
+                "Chain name missing in atom record (atom: '{}', residue: '{}')",
+                attempted_atom_name, attempted_residue_name
+            ),
+        });
+    }
+    if x.is_empty() {
+        return Err(PDBParseError {
+            message: format!(
+                "Atom X position missing in atom record (atom: '{}', residue: '{}')",
+                attempted_atom_name, attempted_residue_name
+            ),
+        });
+    }
+    if y.is_empty() {
+        return Err(PDBParseError {
+            message: format!(
+                "Atom Y position missing in atom record (atom: '{}', residue: '{}')",
+                attempted_atom_name, attempted_residue_name
+            ),
+        });
+    }
+    if z.is_empty() {
+        return Err(PDBParseError {
+            message: format!(
+                "Atom Z position missing in atom record (atom: '{}', residue: '{}')",
+                attempted_atom_name, attempted_residue_name
+            ),
+        });
+    }
+
+    // Parse numeric fields
+    let id = line.get(6..11).unwrap_or("").trim().parse::<u64>().unwrap_or(0);
+    let residue_number = residue_number.parse::<u64>().unwrap_or(0);
+    let pos_x = x.parse::<f32>().unwrap_or(0.0);
+    let pos_y = y.parse::<f32>().unwrap_or(0.0);
+    let pos_z = z.parse::<f32>().unwrap_or(0.0);
+    let b_factor = b_factor.parse::<f32>().unwrap_or(1.0);
+    let residue_name_arr = parse_residue_name(residue_name);
+    let chain_name_vec = chain_id.as_bytes().to_vec();
+
+    Ok(Atom::new(
+        pos_x, pos_y, pos_z,
+        parse_atom_name(atom_name),
+        id,
+        chain_name_vec,
+        residue_name_arr,
+        residue_number,
+        b_factor,
+    ))
+}
+
+// Update read_structure and read_structure_from_gz to propagate and print errors
 impl Reader<File> {
     pub fn new(file: File) -> Self {
         Reader {
@@ -37,8 +185,9 @@ impl Reader<File> {
     pub fn read_structure(&self) -> Result<Structure, &str> {
         let reader = BufReader::new(&self.reader);
         let mut structure = Structure::new(); // revise
-        let mut record = (b' ', 0);
+        let mut record = (vec![b' '], 0);
         let mut model = 0;
+        let mut errors = Vec::new();
         // Reading each line of PDB, parse and build atomvector.
         for (_idx, line) in reader.lines().enumerate() {
             if let Ok(atomline) = line {
@@ -55,12 +204,12 @@ impl Reader<File> {
                         model += 1;
                     }
                     "ATOM  " => {
-                        let atom = parse_line(&atomline);
-                        match atom {
+                        match parse_line(&atomline) {
                             Ok(atom) => {
                                 structure.update(atom, &mut record);
                             }
-                            Err(_e) => {
+                            Err(e) => {
+                                errors.push(e);
                                 continue;
                             }
                         }
@@ -70,6 +219,14 @@ impl Reader<File> {
             } else {
                 return Err("Error reading line");
             };
+        }
+        if !errors.is_empty() {
+            let file_name = "<unknown>"; // You can add a path field to Reader if you want
+            eprintln!("\nError(s) in file: {}\n", file_name);
+            for error in &errors {
+                eprintln!("{}", error);
+            }
+            return Err("Error parsing PDB file");
         }
         // println!("{structure:?}");
         Ok(structure)
@@ -87,24 +244,21 @@ impl Reader<File> {
 
         // Create a new Structure
         let mut structure = Structure::new();
-        let mut record = (b' ', 0);
+        let mut record = (vec![b' '], 0);
+        let reader = BufReader::new(&binary[..]);
+        let mut errors = Vec::new();
         
         // Read binary as a string. Conver
-        let reader = BufReader::new(&binary[..]);
-        // Convert to string
         for (_idx, line) in reader.lines().enumerate() {
             if let Ok(atomline) = line {
                 match &atomline[..6] {
                     "ATOM  " => {
-                        let atom = parse_line(&atomline);
-                        match atom {
+                        match parse_line(&atomline) {
                             Ok(atom) => {
                                 structure.update(atom, &mut record);
                             }
-                            Err(_e) => {
-                                // Conversion error. Jusk skip the line.
-                                // If verbose, print message (NOT IMPLEMENTED)
-                                // println!("Skipping line{}: {}", idx, e);
+                            Err(e) => {
+                                errors.push(e);
                                 continue;
                             }
                         }
@@ -114,6 +268,14 @@ impl Reader<File> {
             } else {
                 return Err("Error reading line");
             };
+        }
+        if !errors.is_empty() {
+            let file_name = "<unknown>"; // You can add a path field to Reader if you want
+            eprintln!("\nError(s) in file: {}\n", file_name);
+            for error in &errors {
+                eprintln!("{}", error);
+            }
+            return Err("Error parsing PDB file");
         }
         // Drop the binary
         drop(binary);

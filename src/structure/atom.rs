@@ -8,7 +8,7 @@ pub struct Atom {
     pub z: f32,
     pub atom_name: [u8; 4],
     pub atom_serial: u64,
-    pub chain: u8,
+    pub chain: Vec<u8>,
     pub res_name: [u8; 3],
     pub res_serial: u64,
     pub b_factor: f32,
@@ -22,7 +22,7 @@ impl Atom {
         z: f32,
         atom_name: [u8; 4],
         atom_serial: u64,
-        chain: u8,
+        chain: Vec<u8>,
         res_name: [u8; 3],
         res_serial: u64,
         b_factor: f32,
@@ -46,7 +46,7 @@ impl Atom {
             z: 0.0,
             atom_name: [0; 4],
             atom_serial: 0,
-            chain: 0,
+            chain: Vec::new(),
             res_name: [0; 3],
             res_serial: 0,
             b_factor: 0.0,
@@ -67,6 +67,9 @@ impl Atom {
     pub fn get_res_serial(&self) -> u64 {
         self.res_serial
     }
+    pub fn get_chain_string(&self) -> String {
+        String::from_utf8_lossy(&self.chain).to_string()
+    }
 }
 
 /// AtomVector
@@ -77,7 +80,7 @@ pub struct AtomVector {
     pub atom_serial: Vec<u64>,
     pub res_name: Vec<[u8; 3]>,
     pub res_serial: Vec<u64>,
-    pub chain: Vec<u8>,
+    pub chain: Vec<Vec<u8>>,
     pub b_factor: Vec<f32>,
 }
 
@@ -103,7 +106,7 @@ impl AtomVector {
         atom_serial: u64,
         res_name: [u8; 3],
         res_serial: u64,
-        chain: u8,
+        chain: Vec<u8>,
         b_factor: f32,
     ) {
         self.atom_name.push(atom_name);
@@ -127,22 +130,20 @@ impl AtomVector {
         self.atom_serial.push(atom.atom_serial);
         self.res_name.push(atom.res_name);
         self.res_serial.push(atom.res_serial);
-        self.chain.push(atom.chain);
+        self.chain.push(atom.chain.clone());
         self.b_factor.push(atom.b_factor);
     }
 
     pub fn get(&self, index: usize) -> Atom {
         Atom {
-            // atom_name: self.atom_name[index].clone(),
             atom_name: self.atom_name[index],
             x: self.coordinates.x[index],
             y: self.coordinates.y[index],
             z: self.coordinates.z[index],
             atom_serial: self.atom_serial[index],
-            // res_name: self.res_name[index].clone(),
             res_name: self.res_name[index],
             res_serial: self.res_serial[index],
-            chain: self.chain[index],
+            chain: self.chain[index].clone(),
             b_factor: self.b_factor[index],
         }
     }
@@ -185,6 +186,10 @@ impl AtomVector {
 
     pub fn get_atom_name(&self, index: usize) -> [u8; 4] {
         self.atom_name[index]
+    }
+
+    pub fn get_chain_string(&self, index: usize) -> String {
+        String::from_utf8_lossy(&self.chain[index]).to_string()
     }
 
     // IMPORTANT: LET'S STICK TO 0-BASED INDEXING AS IN RUST

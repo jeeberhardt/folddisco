@@ -107,7 +107,7 @@ impl<'a> fmt::Display for StructureResult<'a> {
                 |(x, y, _, _, _)| format!("{}:{:.4}", x.iter().map(|x| {
                     match x {
                         // Convert u8 to char
-                        Some((a, b)) => format!("{}{}", *a as char, b),
+                        Some((a, b)) => format!("{}{}", String::from_utf8_lossy(a), b),
                         None => "_".to_string()
                     }
                 }).collect::<Vec<String>>().join(","), y)
@@ -131,7 +131,7 @@ impl<'a> fmt::Debug for StructureResult<'a> {
                 // Only print score with 4 decimal places
                 |(x, y, _, _, _)| format!("{}:{:.4}", x.iter().map(|x| {
                     match x {
-                        Some((a, b)) => format!("{}{}", *a as char, b),
+                        Some((a, b)) => format!("{}{}", String::from_utf8_lossy(a), b),
                         None => "_".to_string()
                     }
                 }).collect::<Vec<String>>().join(","), y)
@@ -155,7 +155,7 @@ impl<'a> StructureResult<'a> {
                 // Only print score with 4 decimal places
                 |(x, y, _, _, _)| format!("{}:{:.4}", x.iter().map(|x| {
                     match x {
-                        Some((a, b)) => format!("{}{}", *a as char, b),
+                        Some((a, b)) => format!("{}{}", String::from_utf8_lossy(a), b),
                         None => "_".to_string()
                     }
                 }).collect::<Vec<String>>().join(","), y)
@@ -212,7 +212,7 @@ impl<'a> MatchResult<'a> {
     pub fn to_string(&self, superpose: bool) -> String {
         let matching_residues = self.matching_residues.iter().map(|x| {
             match x {
-                Some((a, b)) => format!("{}{}", *a as char, b),
+                Some((a, b)) => format!("{}{}", String::from_utf8_lossy(a), b),
                 None => "_".to_string()
             }
         }).collect::<Vec<String>>().join(",");
@@ -251,7 +251,7 @@ impl<'a> fmt::Display for MatchResult<'a> {
             self.id, self.node_count, self.idf, self.rmsd,
             self.matching_residues.iter().map(|x| {
                 match x {
-                    Some((a, b)) => format!("{}{}", *a as char, b),
+                    Some((a, b)) => format!("{}{}", String::from_utf8_lossy(a), b),
                     None => "_".to_string()
                 }
             }).collect::<Vec<String>>().join(","),
@@ -267,7 +267,7 @@ impl<'a> fmt::Debug for MatchResult<'a> {
             self.id, self.node_count, self.idf, self.rmsd,
             self.matching_residues.iter().map(|x| {
                 match x {
-                    Some((a, b)) => format!("{}{}", *a as char, b),
+                    Some((a, b)) => format!("{}{}", String::from_utf8_lossy(a), b),
                     None => "_".to_string()
                 }
             }).collect::<Vec<String>>().join(","),
@@ -284,7 +284,7 @@ impl<'a> MatchResult<'a> {
             self.id, self.node_count, self.idf, self.rmsd,
             self.matching_residues.iter().map(|x| {
                 match x {
-                    Some((a, b)) => format!("{}{}", *a as char, b),
+                    Some((a, b)) => format!("{}{}", String::from_utf8_lossy(a), b),
                     None => "_".to_string()
                 }
             }).collect::<Vec<String>>().join(","),
@@ -340,7 +340,6 @@ pub fn sort_and_print_structure_query_result(
         if header {
             println!("{}", STRUCTURE_QUERY_RESULT_HEADER);
         }
-        // let mut id_container = String::new();
         for (_k, v) in results.iter() {
             println!("{:?}\t{}", v, query_string);
         }
@@ -418,7 +417,6 @@ pub fn sort_and_print_match_query_result(
         if header {
             println!("{}", MATCH_QUERY_RESULT_HEADER);
         }
-        // let mut id_container = String::new();
         for (_k, v) in results.iter() {
             println!("{}\t{}", v.to_string(superpose), query_string);
         }

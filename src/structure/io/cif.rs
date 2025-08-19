@@ -2,7 +2,7 @@
 // Modified from pdbtbx
 use std::fs::File;
 use std::io::{self, BufReader, Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use flate2::read::GzDecoder;
 
@@ -22,6 +22,7 @@ pub struct Reader<R: io::Read> {
     pub reader: R,
     ///
     pub input_type: StructureFileFormat,
+    pub path: Option<PathBuf>,
 }
 
 // ??? trait Read -> impl Read for __ ???
@@ -30,13 +31,18 @@ impl Reader<File> {
         Reader {
             reader: file,
             input_type: StructureFileFormat::CIF,
+            path: None,
         }
     }
 
     /// Read from a file path
     pub fn from_file<P: AsRef<Path> + std::fmt::Debug>(path: P) -> Result<Self, &'static str> {
         File::open(&path)
-            .map(Reader::new)
+            .map(|file| Reader {
+                reader: file,
+                input_type: StructureFileFormat::CIF,
+                path: Some(path.as_ref().to_path_buf()),
+            })
             .map_err(|_e| "Error opening file")
     }
 
@@ -44,19 +50,30 @@ impl Reader<File> {
         let mut reader = BufReader::new(&self.reader);
         let mut structure = Structure::new(); // revise
         let mut contents = String::new();
+        let mut record = (vec![b' '], 0);
+        let file_name = self.path.as_ref().map(|p| p.to_string_lossy()).unwrap_or_else(|| "<unknown>".into());
         if reader.read_to_string(&mut contents).is_ok() {
             match pdbtbx_cif::lex_cif(contents.as_str()) {
-                Ok(data_block) => parse_mmcif_block_into_structure(&data_block, &mut structure),
+                Ok(data_block) => {
+                    return match parse_mmcif_block_into_structure(&data_block, &mut structure, &mut record) {
+                        Ok(()) => Ok(structure),
+                        Err(errors) => {
+                            eprintln!("\nError(s) in file: {}\n", file_name);
+                            for error in &errors {
+                                eprintln!("{}", error);
+                            }
+                            Err("Error parsing CIF file")
+                        },
+                    };
+                }
                 Err(e) => {
-                    eprintln!("Error parsing CIF file: {:?}", e);
+                    eprintln!("Error parsing CIF file '{}': {:?}", file_name, e);
                     return Err("Error parsing CIF file");
                 }
             }
         } else {
             return Err("Error reading file");
         }
-        
-        Ok(structure)
     }
 
     pub fn read_structure_from_gz(&self) -> Result<Structure, &str> {
@@ -75,35 +92,47 @@ impl Reader<File> {
         // Read binary as a string. Conver
         let mut reader = BufReader::new(&binary[..]);
         let mut contents = String::new();
+        let mut record = (vec![b' '], 0);
+        let file_name = self.path.as_ref().map(|p| p.to_string_lossy()).unwrap_or_else(|| "<unknown>".into());
         if reader.read_to_string(&mut contents).is_ok() {
             match pdbtbx_cif::lex_cif(contents.as_str()) {
-                Ok(data_block) => parse_mmcif_block_into_structure(&data_block, &mut structure),
+                Ok(data_block) => {
+                    return match parse_mmcif_block_into_structure(&data_block, &mut structure, &mut record) {
+                        Ok(()) => Ok(structure),
+                        Err(errors) => {
+                            eprintln!("\nError(s) in file: {}\n", file_name);
+                            for error in &errors {
+                                eprintln!("{}", error);
+                            }
+                            Err("Error parsing CIF file")
+                        },
+                    };
+                }
                 Err(e) => {
-                    eprintln!("Error parsing CIF file: {:?}", e);
+                    eprintln!("Error parsing CIF file '{}': {:?}", file_name, e);
                     return Err("Error parsing CIF file");
                 }
             }
         } else {
             return Err("Error reading file");
         }
-        
-
-        drop(binary);
-        Ok(structure)
     }
     
 }
 
 
-fn parse_mmcif_block_into_structure(input: &DataBlock, structure: &mut Structure) {
+fn parse_mmcif_block_into_structure(
+    input: &DataBlock,
+    structure: &mut Structure,
+    record: &mut (Vec<u8>, u64),
+) -> Result<(), Vec<PDBError>> {
     let mut errors: Vec<PDBError> = Vec::new();
-    let mut record = (b' ', 0);
     for item in &input.items {
         let result = match item {
             Item::DataItem(di) => match di {
                 DataItem::Loop(multiple) => {
                     if multiple.header.contains(&"atom_site.group_PDB".to_string()) {
-                        parse_atoms(multiple, structure, &mut record)
+                        parse_atoms(multiple, structure, record)
                     } else {
                         None
                     }
@@ -117,10 +146,9 @@ fn parse_mmcif_block_into_structure(input: &DataBlock, structure: &mut Structure
         }
     }
     if !errors.is_empty() {
-        for error in errors {
-            eprintln!("{}", error);
-        }
+        return Err(errors);
     }
+    Ok(())
 }
 
 
@@ -135,7 +163,7 @@ fn flatten_result<T, E>(value: Result<Result<T, E>, E>) -> Result<T, E> {
 
 /// Parse a loop containing atomic data
 fn parse_atoms(
-    input: &Loop, structure: &mut Structure, record: &mut (u8, u64)
+    input: &Loop, structure: &mut Structure, record: &mut (Vec<u8>, u64)
 ) -> Option<Vec<PDBError>> {
     #[derive(Eq, PartialEq)]
     /// The mode of a column
@@ -211,8 +239,6 @@ fn parse_atoms(
         return Some(errors);
     }
 
-    // Currently, ignoring atom deduplicte check from original code
-
     // The previous lines make sure that there is no error in the vector.
     let positions: Vec<Option<usize>> = positions_.iter().map(|i| *i.as_ref().unwrap()).collect();
     let mut first_model_number: usize = 0;
@@ -220,7 +246,6 @@ fn parse_atoms(
         let values: Vec<Option<&Value>> = positions.iter().map(|i| i.map(|x| &row[x])).collect();
         let context = Context::show(format!("Main atomic data loop row: {index}"));
 
-        /// Parse a column given the function to use and the column index
         macro_rules! parse_column {
             ($type:tt, $index:tt) => {
                 if let Some(value) = values[$index.0] {
@@ -238,7 +263,6 @@ fn parse_atoms(
         }
 
         // Early return cases
-        // let element = parse_column!(get_text, ATOM_TYPE).expect("Atom element should be provided");
         let model_number = parse_column!(get_usize, ATOM_MODEL).unwrap_or(1);
         // Use only first model
         if index == 0 {
@@ -248,32 +272,229 @@ fn parse_atoms(
         }
 
         // Parse remaining fields in the order they appear in the line
-
-        let name = parse_column!(get_four_char_array, ATOM_NAME).expect("Atom name should be provided");
-        let id: u64 = parse_column!(get_isize, ATOM_ID).expect("Atom ID should be provided") as u64;
-        let residue_name: [u8; 3] = parse_column!(get_three_char_array, ATOM_COMP_ID).expect("Residue name should be provided");
-        let residue_number: u64 = parse_column!(get_isize, ATOM_AUTH_SEQ_ID).unwrap_or_else(|| {
-            parse_column!(get_isize, ATOM_SEQ_ID)
-                .expect("Residue number should be provided")
-        }) as u64;
-        let chain_name = parse_column!(get_one_char, ATOM_AUTH_ASYM_ID).unwrap_or_else(|| {
-            parse_column!(get_one_char, ATOM_ASYM_ID).expect("Chain name should be provided")
-        });
-        let pos_x = parse_column!(get_f32, ATOM_X).expect("Atom X position should be provided");
-        let pos_y = parse_column!(get_f32, ATOM_Y).expect("Atom Y position should be provided");
-        let pos_z = parse_column!(get_f32, ATOM_Z).expect("Atom Z position should be provided");
+        let name = match parse_column!(get_four_char_array, ATOM_NAME) {
+            Some(val) => val,
+            None => {
+                let attempted_atom_name = match values[ATOM_NAME.0] {
+                    Some(Value::Text(ref t)) => t.as_str(),
+                    Some(Value::Unknown) => "Unknown",
+                    Some(Value::Inapplicable) => "Inapplicable",
+                    _ => "missing",
+                };
+                let attempted_residue_name = match values[ATOM_COMP_ID.0] {
+                    Some(Value::Text(ref t)) => t.as_str(),
+                    Some(Value::Unknown) => "Unknown",
+                    Some(Value::Inapplicable) => "Inapplicable",
+                    _ => "missing",
+                };
+                errors.push(PDBError::new(
+                    ErrorLevel::InvalidatingError,
+                    "Atom name should be provided",
+                    &format!(
+                        "Atom name missing in atom record (atom: '{}', residue: '{}')",
+                        attempted_atom_name, attempted_residue_name
+                    ),
+                    context.clone(),
+                ));
+                continue;
+            }
+        };
+        let id: u64 = match parse_column!(get_isize, ATOM_ID) {
+            Some(val) => val as u64,
+            None => {
+                let attempted_atom_name = match values[ATOM_NAME.0] {
+                    Some(Value::Text(ref t)) => t.as_str(),
+                    Some(Value::Unknown) => "Unknown",
+                    Some(Value::Inapplicable) => "Inapplicable",
+                    _ => "missing",
+                };
+                let attempted_residue_name = match values[ATOM_COMP_ID.0] {
+                    Some(Value::Text(ref t)) => t.as_str(),
+                    Some(Value::Unknown) => "Unknown",
+                    Some(Value::Inapplicable) => "Inapplicable",
+                    _ => "missing",
+                };
+                errors.push(PDBError::new(
+                    ErrorLevel::InvalidatingError,
+                    "Atom ID should be provided",
+                    &format!(
+                        "Atom ID missing in atom record (atom: '{}', residue: '{}')",
+                        attempted_atom_name, attempted_residue_name
+                    ),
+                    context.clone(),
+                ));
+                continue;
+            }
+        };
+        let residue_name: [u8; 3] = match parse_column!(get_three_char_array, ATOM_COMP_ID) {
+            Some(val) => val,
+            None => {
+                let attempted_atom_name = match values[ATOM_NAME.0] {
+                    Some(Value::Text(ref t)) => t.as_str(),
+                    Some(Value::Unknown) => "Unknown",
+                    Some(Value::Inapplicable) => "Inapplicable",
+                    _ => "missing",
+                };
+                let attempted_residue_name = match values[ATOM_COMP_ID.0] {
+                    Some(Value::Text(ref t)) => t.as_str(),
+                    Some(Value::Unknown) => "Unknown",
+                    Some(Value::Inapplicable) => "Inapplicable",
+                    _ => "missing",
+                };
+                errors.push(PDBError::new(
+                    ErrorLevel::InvalidatingError,
+                    "Residue name should be provided",
+                    &format!(
+                        "Residue name missing in atom record (atom: '{}', residue: '{}')",
+                        attempted_atom_name, attempted_residue_name
+                    ),
+                    context.clone(),
+                ));
+                continue;
+            }
+        };
+        let residue_number: u64 = match parse_column!(get_isize, ATOM_AUTH_SEQ_ID) {
+            Some(val) => val as u64,
+            None => match parse_column!(get_isize, ATOM_SEQ_ID) {
+                Some(val) => val as u64,
+                None => {
+                    let attempted_atom_name = match values[ATOM_NAME.0] {
+                        Some(Value::Text(ref t)) => t.as_str(),
+                        Some(Value::Unknown) => "Unknown",
+                        Some(Value::Inapplicable) => "Inapplicable",
+                        _ => "missing",
+                    };
+                    let attempted_residue_name = match values[ATOM_COMP_ID.0] {
+                        Some(Value::Text(ref t)) => t.as_str(),
+                        Some(Value::Unknown) => "Unknown",
+                        Some(Value::Inapplicable) => "Inapplicable",
+                        _ => "missing",
+                    };
+                    errors.push(PDBError::new(
+                        ErrorLevel::InvalidatingError,
+                        "Residue number should be provided",
+                        &format!(
+                            "Residue number missing in atom record (atom: '{}', residue: '{}')",
+                            attempted_atom_name, attempted_residue_name
+                        ),
+                        context.clone(),
+                    ));
+                    continue;
+                }
+            },
+        };
+        let chain_name = match parse_column!(get_vec_u8, ATOM_AUTH_ASYM_ID) {
+            Some(val) => val,
+            None => match parse_column!(get_vec_u8, ATOM_ASYM_ID) {
+                Some(val) => val,
+                None => {
+                    let attempted_atom_name = match values[ATOM_NAME.0] {
+                        Some(Value::Text(ref t)) => t.as_str(),
+                        Some(Value::Unknown) => "Unknown",
+                        Some(Value::Inapplicable) => "Inapplicable",
+                        _ => "missing",
+                    };
+                    let attempted_residue_name = match values[ATOM_COMP_ID.0] {
+                        Some(Value::Text(ref t)) => t.as_str(),
+                        Some(Value::Unknown) => "Unknown",
+                        Some(Value::Inapplicable) => "Inapplicable",
+                        _ => "missing",
+                    };
+                    errors.push(PDBError::new(
+                        ErrorLevel::InvalidatingError,
+                        "Chain name should be provided",
+                        &format!(
+                            "Chain name missing in atom record (atom: '{}', residue: '{}')",
+                            attempted_atom_name, attempted_residue_name
+                        ),
+                        context.clone(),
+                    ));
+                    continue;
+                }
+            },
+        };
+        let pos_x = match parse_column!(get_f32, ATOM_X) {
+            Some(val) => val,
+            None => {
+                let attempted_atom_name = match values[ATOM_NAME.0] {
+                    Some(Value::Text(ref t)) => t.as_str(),
+                    Some(Value::Unknown) => "Unknown",
+                    Some(Value::Inapplicable) => "Inapplicable",
+                    _ => "missing",
+                };
+                let attempted_residue_name = match values[ATOM_COMP_ID.0] {
+                    Some(Value::Text(ref t)) => t.as_str(),
+                    Some(Value::Unknown) => "Unknown",
+                    Some(Value::Inapplicable) => "Inapplicable",
+                    _ => "missing",
+                };
+                errors.push(PDBError::new(
+                    ErrorLevel::InvalidatingError,
+                    "Atom X position should be provided",
+                    &format!(
+                        "Atom X position missing in atom record (atom: '{}', residue: '{}')",
+                        attempted_atom_name, attempted_residue_name
+                    ),
+                    context.clone(),
+                ));
+                continue;
+            }
+        };
+        let pos_y = match parse_column!(get_f32, ATOM_Y) {
+            Some(val) => val,
+            None => {
+                let attempted_atom_name = match values[ATOM_NAME.0] {
+                    Some(Value::Text(ref t)) => t.as_str(),
+                    Some(Value::Unknown) => "Unknown",
+                    Some(Value::Inapplicable) => "Inapplicable",
+                    _ => "missing",
+                };
+                let attempted_residue_name = match values[ATOM_COMP_ID.0] {
+                    Some(Value::Text(ref t)) => t.as_str(),
+                    Some(Value::Unknown) => "Unknown",
+                    Some(Value::Inapplicable) => "Inapplicable",
+                    _ => "missing",
+                };
+                errors.push(PDBError::new(
+                    ErrorLevel::InvalidatingError,
+                    "Atom Y position should be provided",
+                    &format!(
+                        "Atom Y position missing in atom record (atom: '{}', residue: '{}')",
+                        attempted_atom_name, attempted_residue_name
+                    ),
+                    context.clone(),
+                ));
+                continue;
+            }
+        };
+        let pos_z = match parse_column!(get_f32, ATOM_Z) {
+            Some(val) => val,
+            None => {
+                let attempted_atom_name = match values[ATOM_NAME.0] {
+                    Some(Value::Text(ref t)) => t.as_str(),
+                    Some(Value::Unknown) => "Unknown",
+                    Some(Value::Inapplicable) => "Inapplicable",
+                    _ => "missing",
+                };
+                let attempted_residue_name = match values[ATOM_COMP_ID.0] {
+                    Some(Value::Text(ref t)) => t.as_str(),
+                    Some(Value::Unknown) => "Unknown",
+                    Some(Value::Inapplicable) => "Inapplicable",
+                    _ => "missing",
+                };
+                errors.push(PDBError::new(
+                    ErrorLevel::InvalidatingError,
+                    "Atom Z position should be provided",
+                    &format!(
+                        "Atom Z position missing in atom record (atom: '{}', residue: '{}')",
+                        attempted_atom_name, attempted_residue_name
+                    ),
+                    context.clone(),
+                ));
+                continue;
+            }
+        };
         let b_factor = parse_column!(get_f32, ATOM_B).unwrap_or(1.0);
-        // Current version does not support Occupancy, Charge and Anisotropic temperature factors 
-
-        // NOT handling HETATM with this version
-        // let atom_type = parse_column!(get_text, ATOM_GROUP).unwrap_or_else(|| "ATOM".to_string());
-        // let hetero = if atom_type == "ATOM" {
-        //     false
-        // } else if atom_type == "HETATM" {
-        //     true
-        // } else {
-        //     true
-        // };
 
         let atom = Atom::new(
             pos_x, pos_y, pos_z, name, id,
@@ -322,42 +543,31 @@ fn get_three_char_array(
 ) -> Result<Option<[u8; 3]>, PDBError> {
     match value {
         Value::Text(t) => {
-            match t.as_bytes().len() {
-                1 => Ok(Some([t.as_bytes()[0], b' ', b' '])),
-                2 => Ok(Some([t.as_bytes()[0], t.as_bytes()[1], b' '])),
-                3 => Ok(Some([t.as_bytes()[0], t.as_bytes()[1], t.as_bytes()[2]])),
-                // _ => Err(PDBError::new(
-                //     ErrorLevel::InvalidatingError,
-                //     "Invalid residue name",
-                //     "Invalid residue name",
-                //     _context.clone(),
-                // )), 
-                // 2025-06-24 16:29:00 For now, not allowing residue names longer than 3 characters
-                // If more than 3 characters, we will return empty residue name
-                _ => Ok(Some([b' ', b' ', b' '])), // Default to empty residue name
+            let bytes = t.as_bytes();
+            match bytes.len() {
+                1 => Ok(Some([bytes[0], b' ', b' '])),
+                2 => Ok(Some([bytes[0], bytes[1], b' '])),
+                3 => Ok(Some([bytes[0], bytes[1], bytes[2]])),
+                _ => Ok(Some([b' ', b' ', b' '])), // Default to empty residue name for >3 chars
             }
         },
+        Value::Numeric(num) => {
+            let s = format!("{:03}", *num as u32);
+            let bytes = s.as_bytes();
+            Ok(Some([bytes[0], bytes[1], bytes[2]]))
+        },
+        Value::Unknown | Value::Inapplicable => Ok(None),
         _ => Ok(None),
     }
 }
 
-fn get_one_char(
+fn get_vec_u8(
     value: &Value,
     _context: &Context,
     _column: Option<&str>,
-) -> Result<Option<u8>, PDBError> {
+) -> Result<Option<Vec<u8>>, PDBError> {
     match value {
-        Value::Text(t) => {
-            match t.as_bytes().len() {
-                1 => Ok(Some(t.as_bytes()[0])),
-                _ => Err(PDBError::new(
-                    ErrorLevel::InvalidatingError,
-                    "Invalid chain name",
-                    "Currently only one character chain names are supported",
-                    _context.clone(),
-                )),
-            }
-        },
+        Value::Text(t) => Ok(Some(t.as_bytes().to_vec())),
         _ => Ok(None),
     }
 }

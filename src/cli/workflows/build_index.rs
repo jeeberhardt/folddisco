@@ -20,7 +20,7 @@ use crate::structure::io::StructureFileFormat;
 use peak_alloc::PeakAlloc;
 
 #[cfg(feature= "foldcomp")]
-use crate::structure::io::fcz::*;
+use crate::structure::io::fcz::{read_foldcomp_db_lookup, read_foldcomp_db_index, get_path_vector_out_of_lookup_and_index};
 
 #[cfg(feature = "foldcomp")]
 use rayon::prelude::ParallelSliceMut;
