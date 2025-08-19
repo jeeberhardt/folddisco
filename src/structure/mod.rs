@@ -3,5 +3,5 @@ pub mod core;
 pub mod feature;
 pub mod io;
 pub mod kabsch;
-pub mod qcp;
+pub mod lms_qcp;
 pub mod coordinate;

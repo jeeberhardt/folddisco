@@ -17,9 +17,12 @@ use crate::controller::filter::{MatchFilter, StructureFilter};
 use crate::controller::map::SimpleHashMap;
 use crate::controller::mode::{IndexMode, QueryMode};
 use crate::cli::*;
-use crate::controller::io::{read_compact_structure, read_u16_vector};
+use crate::controller::io::{
+    read_compact_structure, read_u16_vector, 
+    check_and_get_indices, get_offset_value_lookup_type,
+};
 use crate::controller::query::{
-    check_and_get_indices, get_offset_value_lookup_type, make_query_map, parse_threshold_string
+    make_query_map, parse_threshold_string
 };
 use crate::controller::count_query::{count_query_bigmode, count_query_idmode};
 use crate::controller::result::{
@@ -37,6 +40,8 @@ use crate::controller::retrieve::retrieval_wrapper_for_foldcompdb;
 use crate::structure::io::fcz::FoldcompDbReader;
 #[cfg(feature = "foldcomp")]
 use crate::structure::io::StructureFileFormat;
+#[cfg(feature = "foldcomp")]
+use crate::controller::io::get_foldcomp_db_path_with_prefix;
 
 pub const HELP_QUERY: &str = "\
 usage: folddisco query -p <i:PDB> -q <QUERY> -i <i:INDEX> [OPTIONS] 
@@ -49,9 +54,9 @@ input/output:
  
 search parameters:
  -t, --threads <INT>              Number of threads [1]
- -d, --distance <FLOAT>           Distance threshold in Angstroms. Multiple values can be separated by comma [0.0]
- -a, --angle <FLOAT>              Angle threshold. Multiple values can be separated by comma [0.0]
- --ca-distance <FLOAT>            C-alpha distance threshold in matching residues [1.5]
+ -d, --distance <FLOAT>           Distance threshold in Angstroms. Multiple values can be separated by comma [0.5]
+ -a, --angle <FLOAT>              Angle threshold. Multiple values can be separated by comma [5.0]
+ --ca-distance <FLOAT>            C-alpha distance threshold in matching residues [1.0]
  --sampling-count <INT>           Number of sampled hashes to search [all]
  --sampling-ratio <FLOAT>         Sampling ratio for hashes used in searching. For long queries, smaller ratio is recommended [1.0]
  --freq-filter <FLOAT>            Skip queries with hash frequency higher than given ratio [0.0]
@@ -63,8 +68,6 @@ filtering options:
  --total-match <INT>              Filter out structures with less than total match count [0]
  --covered-node <INT>             Filter out structures not covered by given number of nodes with hashes [0]
  --covered-node-ratio <FLOAT>     Filter out structures not covered by given ratio of nodes with hashes [0.0]
- --covered-edge <INT>             Filter out structures not covered by given number of edges with hashes [0]
- --covered-edge-ratio <FLOAT>     Filter out structures not covered by given ratio of edges with hashes [0.0]
  --max-node <INT>                 Filter out structures of maximum matching node size smaller than given value [0]
  --max-node-ratio <FLOAT>         Filter out structures of maximum matching node size smaller than given ratio [0.0]
  --score <FLOAT>                  IDF score cutoff [0.0]
@@ -82,6 +85,7 @@ display options:
  --sort-by-score                  Sort output by score
  --sort-by-rmsd                   Sort output by RMSD. Not working with --skip-match
  --skip-ca-match                  Print matching residues before C-alpha distance check
+ --partial-fit                    Superposition will find the best aligning substructure using LMS (Least Median of Squares)
  --superpose                      Print U, T, CA of matching residues
 
 general options:
@@ -128,8 +132,6 @@ pub fn query_pdb(env: AppArgs) {
             total_match_count,
             covered_node_count,
             covered_node_ratio,
-            covered_edge_count,
-            covered_edge_ratio,
             max_matching_node_count,
             max_matching_node_ratio,
             idf_score_cutoff,
@@ -150,6 +152,7 @@ pub fn query_pdb(env: AppArgs) {
             output_per_match,
             output_with_superpose,
             skip_ca_match,
+            partial_fit,
             header,
             serial_query,
             output,
@@ -275,7 +278,14 @@ pub fn query_pdb(env: AppArgs) {
             let foldcomp_db_reader = match config.input_format {
                 StructureFileFormat::FCZDB => {
                     if !skip_match {
-                        let foldcomp_db_path = config.foldcomp_db.clone().unwrap();
+                        let mut foldcomp_db_path = config.foldcomp_db.clone().unwrap();
+                        // If foldcomp_db_path is not a valid path, check foldcomp db with index prefix
+                        if !std::path::PathBuf::from(&foldcomp_db_path).is_file() {
+                            let local_foldcomp_db_path = get_foldcomp_db_path_with_prefix(&index_prefix);
+                            if local_foldcomp_db_path.is_some() {
+                                foldcomp_db_path = local_foldcomp_db_path.unwrap();
+                            }
+                        }
                         if verbose {
                             measure_time!(FoldcompDbReader::new(foldcomp_db_path.as_str()))
                         } else {
@@ -335,10 +345,10 @@ pub fn query_pdb(env: AppArgs) {
                         let pdb_query = pdb_query_map.keys().cloned().collect::<Vec<_>>();
                         // Make filters out of filtering parameters
                         let structure_filter = StructureFilter::new(
-                            total_match_count, covered_node_count, covered_node_ratio, covered_edge_count, covered_edge_ratio,
+                            total_match_count, covered_node_count, covered_node_ratio,
                             idf_score_cutoff, num_res_cutoff, plddt_cutoff, 
                             max_matching_node_count, max_matching_node_ratio, rmsd_cutoff,
-                            _residue_count, _residue_count * (_residue_count - 1)
+                            _residue_count,
                         );
 
                         match mode {
@@ -386,7 +396,7 @@ pub fn query_pdb(env: AppArgs) {
                                                 &v.id, MIN_CONNECTED_COMPONENT_SIZE, &pdb_query,
                                                 hash_type, num_bin_dist, num_bin_angle, multiple_bin, dist_cutoff,
                                                 &pdb_query_map, &query_structure, &query_indices,
-                                                &aa_dist_map, ca_dist_threshold,
+                                                &aa_dist_map, ca_dist_threshold, partial_fit
                                             );
                                             #[cfg(feature = "foldcomp")]
                                             let retrieval_result = if using_foldcomp {
@@ -394,14 +404,15 @@ pub fn query_pdb(env: AppArgs) {
                                                     v.db_key, MIN_CONNECTED_COMPONENT_SIZE, &pdb_query,
                                                     hash_type, num_bin_dist, num_bin_angle, multiple_bin, dist_cutoff,
                                                     &pdb_query_map, &query_structure, &query_indices,
-                                                    &aa_dist_map, ca_dist_threshold, &foldcomp_db_reader
+                                                    &aa_dist_map, ca_dist_threshold, partial_fit,
+                                                    &foldcomp_db_reader
                                                 )
                                             } else {
                                                 retrieval_wrapper(
                                                     &v.id, MIN_CONNECTED_COMPONENT_SIZE, &pdb_query,
                                                     hash_type, num_bin_dist, num_bin_angle, multiple_bin, dist_cutoff,
                                                     &pdb_query_map, &query_structure, &query_indices,
-                                                    &aa_dist_map, ca_dist_threshold,
+                                                    &aa_dist_map, ca_dist_threshold, partial_fit
                                                 )
                                             };
                                             v.matching_residues = retrieval_result.0;
@@ -416,7 +427,7 @@ pub fn query_pdb(env: AppArgs) {
                                                 &v.id, MIN_CONNECTED_COMPONENT_SIZE, &pdb_query,
                                                 hash_type, num_bin_dist, num_bin_angle, multiple_bin, dist_cutoff,
                                                 &pdb_query_map, &query_structure, &query_indices,
-                                                &aa_dist_map, ca_dist_threshold,
+                                                &aa_dist_map, ca_dist_threshold, partial_fit,
                                             );
                                             #[cfg(feature = "foldcomp")]
                                             let retrieval_result = if using_foldcomp {
@@ -424,14 +435,15 @@ pub fn query_pdb(env: AppArgs) {
                                                     v.db_key, MIN_CONNECTED_COMPONENT_SIZE, &pdb_query,
                                                     hash_type, num_bin_dist, num_bin_angle, multiple_bin, dist_cutoff,
                                                     &pdb_query_map, &query_structure, &query_indices,
-                                                    &aa_dist_map, ca_dist_threshold, &foldcomp_db_reader
+                                                    &aa_dist_map, ca_dist_threshold, partial_fit,
+                                                    &foldcomp_db_reader
                                                 )
                                             } else {
                                                 retrieval_wrapper(
                                                     &v.id, MIN_CONNECTED_COMPONENT_SIZE, &pdb_query,
                                                     hash_type, num_bin_dist, num_bin_angle, multiple_bin, dist_cutoff,
                                                     &pdb_query_map, &query_structure, &query_indices,
-                                                    &aa_dist_map, ca_dist_threshold,
+                                                    &aa_dist_map, ca_dist_threshold, partial_fit,
                                                 )
                                             };
                                             v.matching_residues = retrieval_result.0;
@@ -491,7 +503,7 @@ pub fn query_pdb(env: AppArgs) {
                                                 &v.id, MIN_CONNECTED_COMPONENT_SIZE, &pdb_query,
                                                 hash_type, num_bin_dist, num_bin_angle, multiple_bin, dist_cutoff,
                                                 &pdb_query_map, &query_structure, &query_indices,
-                                                &aa_dist_map, ca_dist_threshold,
+                                                &aa_dist_map, ca_dist_threshold, partial_fit
                                             );
                                             #[cfg(feature = "foldcomp")]
                                             let retrieval_result = if using_foldcomp {
@@ -499,14 +511,15 @@ pub fn query_pdb(env: AppArgs) {
                                                     v.db_key, MIN_CONNECTED_COMPONENT_SIZE, &pdb_query,
                                                     hash_type, num_bin_dist, num_bin_angle, multiple_bin, dist_cutoff,
                                                     &pdb_query_map, &query_structure, &query_indices,
-                                                    &aa_dist_map, ca_dist_threshold, &foldcomp_db_reader
+                                                    &aa_dist_map, ca_dist_threshold, partial_fit,
+                                                    &foldcomp_db_reader
                                                 )
                                             } else {
                                                 retrieval_wrapper(
                                                     &v.id, MIN_CONNECTED_COMPONENT_SIZE, &pdb_query,
                                                     hash_type, num_bin_dist, num_bin_angle, multiple_bin, dist_cutoff,
                                                     &pdb_query_map, &query_structure, &query_indices,
-                                                    &aa_dist_map, ca_dist_threshold,
+                                                    &aa_dist_map, ca_dist_threshold, partial_fit,
                                                 )
                                             };
                                             v.matching_residues = retrieval_result.0;
@@ -521,7 +534,7 @@ pub fn query_pdb(env: AppArgs) {
                                                 &v.id, MIN_CONNECTED_COMPONENT_SIZE, &pdb_query,
                                                 hash_type, num_bin_dist, num_bin_angle, multiple_bin, dist_cutoff,
                                                 &pdb_query_map, &query_structure, &query_indices,
-                                                &aa_dist_map, ca_dist_threshold,
+                                                &aa_dist_map, ca_dist_threshold, partial_fit,
                                             );
                                             #[cfg(feature = "foldcomp")]
                                             let retrieval_result = if using_foldcomp {
@@ -529,14 +542,15 @@ pub fn query_pdb(env: AppArgs) {
                                                     v.db_key, MIN_CONNECTED_COMPONENT_SIZE, &pdb_query,
                                                     hash_type, num_bin_dist, num_bin_angle, multiple_bin, dist_cutoff,
                                                     &pdb_query_map, &query_structure, &query_indices,
-                                                    &aa_dist_map, ca_dist_threshold, &foldcomp_db_reader
+                                                    &aa_dist_map, ca_dist_threshold, partial_fit,
+                                                    &foldcomp_db_reader
                                                 )
                                             } else {
                                                 retrieval_wrapper(
                                                     &v.id, MIN_CONNECTED_COMPONENT_SIZE, &pdb_query,
                                                     hash_type, num_bin_dist, num_bin_angle, multiple_bin, dist_cutoff,
                                                     &pdb_query_map, &query_structure, &query_indices,
-                                                    &aa_dist_map, ca_dist_threshold,
+                                                    &aa_dist_map, ca_dist_threshold, partial_fit,
                                                 )
                                             };
                                             v.matching_residues = retrieval_result.0;
@@ -645,7 +659,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_query_pdb_workflow() {
-        let pdb_path = String::from("data/serine_peptidases_filtered/4cha.pdb");
+        let pdb_path = String::from("data/serine_peptidase/4cha.pdb");
         let query_string = String::from("B57,B102,C195");
         let threads = 1;
         let index_path = Some(String::from("data/serine_peptidases_pdbtr_small"));
@@ -661,8 +675,6 @@ mod tests {
             total_match_count: 0,
             covered_node_count: 0,
             covered_node_ratio: 0.0,
-            covered_edge_count: 0,
-            covered_edge_ratio: 0.0,
             max_matching_node_count: 0,
             max_matching_node_ratio: 0.0,
             idf_score_cutoff: 0.0,
@@ -683,6 +695,7 @@ mod tests {
             output_per_match: true,
             output_with_superpose: false,
             skip_ca_match: false,
+            partial_fit: false,
             header: true,
             serial_query: false,
             output: String::from(""),
@@ -711,8 +724,6 @@ mod tests {
                 total_match_count: 0,
                 covered_node_count: 0,
                 covered_node_ratio: 0.0,
-                covered_edge_count: 0,
-                covered_edge_ratio: 0.0,
                 idf_score_cutoff: 0.0,
                 connected_node_count: 0,
                 connected_node_ratio: 0.0,
@@ -737,6 +748,7 @@ mod tests {
                 serial_query: false,
                 output: String::from(""),
                 verbose: true,
+                partial_fit: false,
                 help: false,
             };
             query_pdb(env);
@@ -761,8 +773,6 @@ mod tests {
             total_match_count: 0,
             covered_node_count: 0,
             covered_node_ratio: 0.0,
-            covered_edge_count: 0,
-            covered_edge_ratio: 0.0,
             max_matching_node_count: 0,
             max_matching_node_ratio: 0.0,
             idf_score_cutoff: 0.0,
@@ -783,6 +793,7 @@ mod tests {
             output_per_match: false,
             output_with_superpose: true,
             skip_ca_match: false,
+            partial_fit: false,
             header: true,
             serial_query: false,
             output: String::from(""),

@@ -47,8 +47,6 @@ pub enum AppArgs {
         total_match_count: usize, 
         covered_node_count: usize,
         covered_node_ratio: f32,
-        covered_edge_count: usize,
-        covered_edge_ratio: f32,
         max_matching_node_count: usize,
         max_matching_node_ratio: f32,
         num_res_cutoff: usize,
@@ -75,6 +73,7 @@ pub enum AppArgs {
         output_per_match: bool,
         output_with_superpose: bool,
         skip_ca_match: bool,
+        partial_fit: bool, // Enable LMS based superposition.
         header: bool,
         serial_query: bool,
         output: String,

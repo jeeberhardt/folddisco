@@ -7,6 +7,11 @@
 
 // use crate::*;
 use folddisco::cli::{workflows::{build_index, benchmark, query_pdb}, *};
+use git_version::git_version;
+
+const VERSION_STRING: &str = git_version!(
+    args = ["--abbrev=40", "--always"], fallback = "unknown"
+);
 const HELP: &str = "\
 usage: folddisco <command> [<args>]
 
@@ -14,6 +19,7 @@ subcommands:
   index     Create a new index table from multiple protein structures
   query     Query a motif from an index table
   benchmark Benchmark the performance of folddisco
+  version   Print version information
 
 options:
   -h, --help                 Print this help menu
@@ -29,7 +35,7 @@ fn parse_arg() -> Result<AppArgs, Box<dyn std::error::Error>> {
         Some("index") => Ok(AppArgs::Index {
             pdb_container: args.opt_value_from_str(["-p", "--pdbs"])?,
             hash_type: args.value_from_str(["-y", "--type"]).unwrap_or("default".into()),
-            index_path: args.value_from_str(["-i", "--index"]).unwrap_or("folddisco_index".into()),
+            index_path: args.value_from_str(["-i", "--index"]).unwrap_or("".into()),
             num_threads: args.value_from_str(["-t", "--threads"]).unwrap_or(1),
             mode: args.value_from_str(["-m", "--mode"]).unwrap_or("id".into()),
             num_bin_dist: args.value_from_str(["-d", "--distance"]).unwrap_or(0),
@@ -53,12 +59,10 @@ fn parse_arg() -> Result<AppArgs, Box<dyn std::error::Error>> {
             // Filtering parameters
             dist_threshold: args.value_from_str(["-d", "--distance"]).unwrap_or("0.5".into()),
             angle_threshold: args.value_from_str(["-a", "--angle"]).unwrap_or("5".into()),
-            ca_dist_threshold: args.value_from_str("--ca-distance").unwrap_or(1.5),
+            ca_dist_threshold: args.value_from_str("--ca-distance").unwrap_or(1.0),
             total_match_count: args.value_from_str("--total-match").unwrap_or(0),
             covered_node_count: args.value_from_str("--covered-node").unwrap_or(0),
             covered_node_ratio: args.value_from_str("--covered-node-ratio").unwrap_or(0.0),
-            covered_edge_count: args.value_from_str("--covered-edge").unwrap_or(0),
-            covered_edge_ratio: args.value_from_str("--covered-edge-ratio").unwrap_or(0.0),
             max_matching_node_count: args.value_from_str("--max-node").unwrap_or(0),
             max_matching_node_ratio: args.value_from_str("--max-node-ratio").unwrap_or(0.0),
             idf_score_cutoff: args.value_from_str("--score").unwrap_or(0.0),
@@ -82,6 +86,7 @@ fn parse_arg() -> Result<AppArgs, Box<dyn std::error::Error>> {
             output_per_match: args.contains("--per-match"),
             output_with_superpose: args.contains("--superpose"), // Print target CA, U, T
             skip_ca_match: args.contains("--skip-ca-match"),
+            partial_fit: args.contains("--partial-fit"), // Enable LMS based superposition.
             header: args.contains("--header"),
             serial_query: args.contains("--serial-index"),
             output: args.value_from_str(["-o", "--output"]).unwrap_or("".into()),
@@ -110,7 +115,7 @@ fn parse_arg() -> Result<AppArgs, Box<dyn std::error::Error>> {
             verbose: args.contains(["-v", "--verbose"]),
         }),
         Some("version") => {
-            println!("{}", env!("CARGO_PKG_VERSION"));
+            println!("{}", VERSION_STRING);
             std::process::exit(0);
         },
         Some(_) => Err("Invalid subcommand".into()),

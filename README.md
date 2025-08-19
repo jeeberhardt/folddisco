@@ -1,79 +1,126 @@
 # Folddisco
 
-Folddisco is a bioinformatics tool for indexing and searching discontinuous motifs in protein structures. 
-It is designed to handle large-scale protein databases with unmatched speed and efficiency, 
-enabling the detection of structural motifs across thousands of proteomes or millions of structures.
+Folddisco is tool for searching discontinuous motifs in protein structures.
+It is designed to handle large-scale protein databases with efficiently, enabling the detection of structural motifs across thousands of proteomes or millions of structures.
 
 ## Publications
 [Kim H, Kim RS, Mirdita M, Steinegger M. Structural motif search across the protein-universe with Folddisco. bioRxiv, doi: 10.1101/2025.07.06.663357  (2025)](https://www.biorxiv.org/content/10.1101/2025.07.06.663357v1)
 
-## Features
-- Reduced index size, which enables large databases like AlphaFold to fit on a single disk
-- Side-chain orientation-capturing feature and frequency-based scoring for higher precision
-- Multi-threaded processing for fast indexing and querying
+## Webserver 
+Search protein structures motifs against the [AlphaFoldDB](https://alphafold.ebi.ac.uk/) and [PDB](https://www.rcsb.org/) in seconds using the Folddisco webserver ([code](https://github.com/soedinglab/mmseqs2-app)): [search.foldseek.com/folddisco](https://search.foldseek.com/folddisco) 🚀
 
 ## Installation
-
-### Default Installation
 ```bash
+# Install from Bioconda
+conda create -n folddisco -c conda-forge -c bioconda folddisco
+
+# Install through docker
+docker pull ghcr.io/steineggerlab/folddisco:master
+
+# Precompiled binary for Linux x86-64
+wget https://mmseqs.com/folddisco/folddisco-linux-x86_64.tar.gz; tar xvfz folddisco-linux-x86_64.tar.gz; export PATH=$(pwd)/folddisco/bin/:$PATH
+
+# Precompiled binary for Linux ARM64
+wget https://mmseqs.com/folddisco/folddisco-linux-arm64.tar.gz; tar xvfz folddisco-linux-arm64.tar.gz; export PATH=$(pwd)/folddisco/bin/:$PATH
+
+# macOS (universal, works on Apple Silicon and Intel Macs)
+wget https://mmseqs.com/folddisco/folddisco-macos-universal.tar.gz; tar xvfz folddisco-macos-universal.tar.gz; export PATH=$(pwd)/folddisco/bin/:$PATH
+
+# Compile from source
+git clone https://github.com/steineggerlab/folddisco.git
+cd folddisco
 cargo install --features foldcomp --path .
 ```
+## Quick start
+Folddisco queries a database of precomputed geometric hashes computed from structures. 
 
-### Build from Source
+### Download pre-build database 
+You can download the pre-built human proteome index and use it to search for a common motif, like a zinc finger.
+
+This example is fully self-contained. You can copy and paste the entire block into your terminal.
+
 ```bash
-cargo build --release --features foldcomp
-# Binary is located at target/release/folddisco
-```
+# Download human proteome index. Use wget or aria2 to download the index.
+cd index
+aria2c https://foldcomp.steineggerlab.workers.dev/h_sapiens_folddisco.tar.gz
 
-## Commands
-
-### Indexing
-
-#### Examples
-```bash
-# Default indexing for a small dataset
-# h_sapiens directory or foldcomp database is indexed with default parameters
-folddisco index -p h_sapiens -i index/h_sapiens -t 12
-
-# Indexing big protein dataset
-folddisco index -p swissprot -i index/swissprot -t 64 -m big -v
-
-# Indexing with custom hash type and parameters
-folddisco index -p h_sapiens -i index/h_sapiens -t 12 --type default -d 16 -a 4 # Default
-folddisco index -p h_sapiens -i index/h_sapiens -t 12 --type pdb -d 8 -a 3 # PDB
-```
-
-#### Default Usage
-```bash
-folddisco index -p <PDB_DIR|FOLDCOMP_DB> -i <INDEX_PATH> -t <THREADS>
-```
-
-#### For Large Databases
-```bash
-folddisco index -p <PDB_DIR|FOLDCOMP_DB> -i <INDEX_PATH> -t <THREADS> -m big
-```
-- **Mode `big`:** Generates an 8GB fixed-size offset file suitable for datasets with more than 65,536 structures.
-
-#### Custom Binning and Features
-```bash
-folddisco index -p <PDB_DIR|FOLDCOMP_DB> -i <INDEX_PATH> -t <THREADS> -d <DISTANCE_BINS> -a <ANGLE_BINS> -y <FEATURE_TYPE>
-```
-
-#### Example: Indexing the Human Proteome
-```bash
-folddisco index -p h_sapiens -i index/h_sapiens_folddisco -t 12
+# Extract the index
+tar -xzf h_sapiens_folddisco.tar.gz
+cd ..
 ```
 
 #### Pre-built Indices
 Download pre-built index files:
-- [Human proteome](https://foldcomp.steineggerlab.workers.dev/h_sapiens_folddisco.tar.gz)
-- [E. coli proteome](https://foldcomp.steineggerlab.workers.dev/e_coli_folddisco.tar.gz)
+- [Human proteome](https://opendata.mmseqs.org/folddisco/h_sapiens_folddisco.tar.gz)
+- [E. coli proteome](https://opendata.mmseqs.org/folddisco/e_coli_folddisco.tar.gz)
+- [AFDB proteome of 16 model organisms](https://opendata.mmseqs.org/folddisco/afdb_proteome_v4_folddisco.tar.gz)
+- [Swiss-Prot](https://opendata.mmseqs.org/folddisco/afdb_swissprot_v4_folddisco.tar.gz)
+- To get the full AFDB50 and ESM30 indices, please **visit** https://opendata.mmseqs.org/folddisco
+  - **AFDB50** (`afdb50_v4_folddisco*` + `afdb50_v4*`)
+  - **ESM30** (`highquality_clust30_folddisco*` + `highquality_clust30*`)
 
-### Querying
+### Build an custom index 
+The command below will read all PDB or mmCIF from `serine_peptidases` folder and generate an index `serine_peptidases_folddisco`.
+```bash
+folddisco index -p data/serine_peptidases -i index/serine_peptidases_folddisco
+```
 
-> ## **NOTE:** `-r` flag has been removed. Now, residue matching and RMSD calculation are enabled by default. If you want to skip residue matching and RMSD calculation, use `--skip-match`.
+### Querying a Single Motif
+To search for a specific structural motif, you'll use three main flags:
+-   **`-p`**: Provides the query protein's structure file (PDB/mmCIF).
+-   **`-q`**: Specifies the comma-separated list of residues that form your motif.
+-   **`-i`**: Points to the target database index you want to search against.
 
-#### Examples
+If you omit the **`-q`** flag, `folddisco` defaults to a "whole structure" search. It will find all possible motifs from your entire query protein and search for them in the index.
+
+```bash
+# Search for the catalytic triad from 4CHA.pdb against the indexed peptidases.
+folddisco query -i index/serine_peptidases_folddisco -p query/4CHA.pdb -q B57,B102,C195
+```
+#### Residue & motif syntax
+We allow to customize the query motif using some motif syntax.
+* **Residues:** `B57` = chain `B`, residue number `57`. Ranges are inclusive: `1-10`.
+* **Lists:** comma-separated: `B57,B102,C195`.
+* **Substitutions:** `:<ALT>` allows alternatives:
+  * Single amino acid: `164:H`
+  * Set: `247:ND` (Asp or Asn)
+  * Wildcard/categories:
+    * `X`: any amino acid
+    * `p`: positively charged (Arg, His, Lys)
+    * `n`: negatively charged (Asp, Glu)
+    * `h`: polar (Asn, Gln, Ser, Thr, Tyr)
+    * `b`: hydrophobic (Ala, Cys, Gly, Ile, Leu, Met, Phe, Pro, Val)
+    * `a`: aromatic (His, Phe, Trp, Ty)
+
+### Searching Multiple Motifs (Batch Mode)
+To search for many motifs at once, you can provide a single query file to the **`-q`** flag (and omit the `-p` flag).
+
+This file must be a **tab-separated** text file with these columns:
+1.  **Column 1:** Path to the query structure (PDB/mmCIF).
+2.  **Column 2:** Comma-separated list of motif residues.
+3.  **Column 3:** (Optional) path to the output file (default: `stdout`).
+
+```bash
+# Search a zinc finger motif against pre-downloaded human proteome (see Download pre-build database)
+folddisco query -i index/h_sapiens_folddisco -q query/serine_peptidase.txt
+```
+
+## Commands
+
+### Usage of Query Module
+```bash
+folddisco query -i <INDEX> -p <QUERY_PDB> [-q <QUERY_RESIDUES> -d <DISTANCE_THRESHOLD> -a <ANGLE_THRESHOLD> --skip-match -t <THREADS>]
+```
+
+**Important parameter:**
+- `-d`: Distance threshold in Å increase sensitivity during the prefilter (default: 0.5)
+- `-a`: Angle threshold in degrees, increase sensitivity during the prefilter (default: 20)
+- `--skip-match`: Skips residue matching and RMSD calculation (prefilter only, much faster with same ranking)
+- `--top`: Only report top N hits from the prefilter (controls speed and size of result)
+- `-t`: Threads used for search
+- `-v`: Verbose output
+
+#### Example Querying
 ```bash
 # Search with default settings. This will print out matching motifs with sorting by RMSD.
 folddisco query -p query/4CHA.pdb -q B57,B102,C195 -i index/h_sapiens_folddisco -t 6
@@ -94,7 +141,7 @@ folddisco query -i index/h_sapiens_folddisco -q query/knottin.txt -d 0.5 -a 5 --
 # Query with amino-acid substitutions and range. 
 # Alternative amino acids can be given after colon. 
 # X: substitute to any amino acid, p: positive-charged, n: negative-charged, h: hydrophilic, b: hydrophobic, a: aromatic
-# Here's enolase query with 3 substitutions; Allow His at 164, Asp & Asn at 247, and His at 297.
+# Here's enolase query with 3 substitutions; Allow His at 164, Asp & Asn at 247, and His at 297. (Install e_coli_folddisco index first)
 folddisco query -p query/2MNR.pdb -q 164:H,195,221,247:ND,297:H -i index/e_coli_folddisco -d 0.5 -a 5 --top 10 --header --per-structure
 # Range can be given with dash. This will query first 10 residues and 11th residue with subsitution to any amino acid.
 folddisco query -p query/4CHA.pdb -q 1-10,11:X -i index/h_sapiens_folddisco -t 6 --serial-index
@@ -111,56 +158,65 @@ folddisco query -p query/4CHA.pdb -q B57,B102,C195 -i index/h_sapiens_folddisco 
 folddisco query -q query/zinc_finger.txt -i index/h_sapiens_folddisco -t 6 --covered-node 4 --top 100 --sort-by-score --per-structure --skip-match
 ```
 
+### Indexing
 
-#### Default Usage
+### Usage of Index Module
 ```bash
-folddisco query -i <INDEX> -p <QUERY_PDB> -q <QUERY_RESIDUES> --skip-match -t <THREADS>
-```
-- `--skip-match`: Skips residue matching and RMSD calculation.
-- `-v`: Verbose output.
-
-#### Whole Structure as Query
-```bash
-folddisco query -i <INDEX> -p <QUERY_PDB> --skip-match -t <THREADS>
+folddisco index -p <PDB_DIR|FOLDCOMP_DB> -i <INDEX_PATH> -t <THREADS> [-d <DISTANCE_BINS> -a <ANGLE_BINS> -y <FEATURE_TYPE>]
 ```
 
-#### Using a Query File
-```bash
-folddisco query -i <INDEX> -q <QUERY_FILE> --skip-match -t <THREADS>
-```
+**Important parameter:**
+- `-d`: Distance threshold in Å for pairs to be included (default: 16)
+- `-a`: Bin size of Angle (default: 4)
+- `-m`: For big databases (>65k structures) enable -m big for efficiency. Mode `big`, generates an 8GB fixed-size offset.
+- `-t`: Threads used for search
+- `-v`: Verbose output
+- `--type`: Define which features sets are stored in the index; `default` (Folddisco), `pdb` (RCSB feature sets), or `tr` (trRosetta).
 
-#### Distance and Angle Thresholds
+#### Examples
 ```bash
-folddisco query -i <INDEX> -p <QUERY_PDB> -q <QUERY_RESIDUES> -d <DISTANCE_THRESHOLD> -a <ANGLE_THRESHOLD> --skip-match -t <THREADS>
+# Default indexing for a small dataset
+# h_sapiens directory or foldcomp database is indexed with default parameters
+folddisco index -p h_sapiens -i index/h_sapiens_folddisco -t 12
+
+# Indexing big protein dataset
+folddisco index -p swissprot -i index/swissprot_folddisco -t 64 -m big -v
+
+# Indexing with custom hash type and parameters
+folddisco index -p h_sapiens -i index/h_sapiens_folddisco -t 12 --type default -d 16 -a 4 # Default
+folddisco index -p h_sapiens -i index/h_sapiens_pdbtype -t 12 --type pdb -d 8 -a 3 # PDB
 ```
 
 ## Output
 ### Match Result
 Default output which prints out one matching motif per line
 ```
-id	node_count	avg_idf	rmsd	matching_residues	query_residues
-AF-P00957-F1-model_v4.pdb	3	48.7694	0.2861	_,A666,A564,A568	F207,F212,F225,F229
-AF-P0A6K3-F1-model_v4.pdb	3	58.2650	0.4315	A91,_,A133,A137	F207,F212,F225,F229
-AF-P26649-F1-model_v4.pdb	2	36.0934	0.2204	A53,_,A22,_	F207,F212,F225,F229
-AF-P05020-F1-model_v4.pdb	2	50.9269	0.3112	_,_,A17,A19	F207,F212,F225,F229
-AF-P55798-F1-model_v4.pdb	2	62.1218	0.3725	_,_,A132,A14	F207,F212,F225,F229
+id	node_count	idf_score	rmsd	matching_residues	key	query_residues
+data/serine_peptidases/4cha.pdb	3	0.6138	0.0000	B57,B102,C195	4	B57,B102,C195
+data/serine_peptidases/4cha.pdb	3	0.6138	0.0874	F57,F102,G195	4	B57,B102,C195
+data/serine_peptidases/1pq5.pdb	3	0.4869	0.2609	A56,A99,A195	3	B57,B102,C195
+data/serine_peptidases/1ju3.pdb	2	0.0617	0.7792	_,A223,A234	1	B57,B102,C195
+data/serine_peptidases/1l7a.pdb	2	0.0584	0.7883	_,A146,A127	2	B57,B102,C195
+data/serine_peptidases/1l7a.pdb	2	0.0584	0.8078	_,B146,B127	2	B57,B102,C195
+data/serine_peptidases/1azw.pdb	2	0.1856	0.9234	A179,_,B176	0	B57,B102,C195
 ```
 - `id`: Identifier of the protein structure
 - `node_count`: Number of nodes in the match
 - `idf_score`: Inverse document frequency score of matched structure
 - `rmsd`: Root mean square deviation
 - `matching_residues`: Residue indices in the match (comma-separated, _ for no match)
+- `key`: Numeric identifier of the structure
 - `query_residues`: Residue indices in the query (comma-separated)
 
 ### Structure Result
 Output with one structure per line (`--per-structure`)
 ```
-id	idf_score	total_match_count	node_count	edge_count	max_node_cov	min_rmsd	nres	plddt	matching_residues	query_residues
-AF-P55798-F1-model_v4.pdb	62.1218	4	3	4	2	0.3725	218	95.4576	,,A132,A14:0.3725;,A39,A18,:0.6083	F207,F212,F225,F229
-AF-P0A6K3-F1-model_v4.pdb	58.2650	4	3	4	3	0.4315	169	97.1329	A91,_,A133,A137:0.4315	F207,F212,F225,F229
-AF-P05020-F1-model_v4.pdb	50.9269	4	3	4	3	0.4391	348	97.0974	,,A17,A19:0.3112;_,A222,A178,A203:0.4391	F207,F212,F225,F229
-AF-P00957-F1-model_v4.pdb	48.7694	4	3	4	3	0.2861	876	90.7232	_,A666,A564,A568:0.2861	F207,F212,F225,F229
-AF-P26649-F1-model_v4.pdb	36.0934	2	2	2	2	0.2204	66	75.4210	A53,,A22,:0.2204	F207,F212,F225,F229
+id	idf_score	total_match_count	node_count	edge_count	max_node_cov	min_rmsd	nres	plddt	matching_residues	key	query_residues
+data/serine_peptidases/4cha.pdb	0.6138	8	3	6	3	0.0000	477	13.5404	B57,B102,C195:0.0000;F57,F102,G195:0.0874	4	B57,B102,C195
+data/serine_peptidases/1pq5.pdb	0.4869	4	3	4	3	0.2609	224	5.1340	A56,A99,A195:0.2609	3	B57,B102,C195
+data/serine_peptidases/1ju3.pdb	0.0617	2	2	2	2	0.7792	570	19.4881	_,A223,A234:0.7792	1	B57,B102,C195
+data/serine_peptidases/1l7a.pdb	0.0584	2	2	2	2	0.7883	636	11.7037	_,A146,A127:0.7883;_,B146,B127:0.8078	2	B57,B102,C195
+data/serine_peptidases/1azw.pdb	0.1856	2	2	2	2	0.9234	626	34.2399	A179,_,B176:0.9234	0	B57,B102,C195
 ```
 - `id`: Identifier of the protein structure
 - `idf_score`: Inverse document frequency score with length penalty; Higher score indicates more matches within smaller structures
@@ -172,6 +228,7 @@ AF-P26649-F1-model_v4.pdb	36.0934	2	2	2	2	0.2204	66	75.4210	A53,,A22,:0.2204	F20
 - `nres`: Number of residues
 - `plddt`: Predicted local distance difference test score
 - `matching_residues`: Residue indices in the match (comma-separated, _ for no match, semicolon-separated for multiple matches with RMSD)
+- `key`: Numeric identifier of the structure
 - `query_residues`: Residue indices in the query (comma-separated)
 
 ### Display Options
@@ -182,23 +239,8 @@ AF-P26649-F1-model_v4.pdb	36.0934	2	2	2	2	0.2204	66	75.4210	A53,,A22,:0.2204	F20
 - `--top <N>`: Outputs top N results.
 - `--header`: Outputs header for the result.
 
-## Example Index List
-- **Human proteome:** `index/h_sapiens_folddisco` (23K structures, [Download](https://foldcomp.steineggerlab.workers.dev/h_sapiens_folddisco.tar.gz))
-- **E. coli proteome:** `index/e_coli_folddisco` (4K structures, [Download](https://foldcomp.steineggerlab.workers.dev/e_coli_folddisco.tar.gz))
-
-## Example Query List
-- `query/`
-  - `1G2F.pdb`: Zinc finger protein
-  - `4CHA.pdb`: Serine protease
-  - `1LAP.pdb`: Aminopeptidase
-  - `zinc_finger.txt`: 1G2F.pdb F207,F212,F225,F229
-  - `serine_protease.txt`: 4CHA.pdb B57,B102,C195
-  - `aminopeptidase.txt`: 1LAP.pdb 250,255,273,332,334
-  - `knottin.txt`: 2N6N.pdb 3,10,15,16,21,23,28,30
-  - `enolase.txt`: 2MNR.pdb 164:H,195,221,247:ND,297:H
-
 ## Contributions
 
-<a href="https://github.com/steineggerlab/motifsearch/graphs/contributors">
+<a href="https://github.com/steineggerlab/folddisco/graphs/contributors">
   <img src="https://contributors-img.firebaseapp.com/image?repo=steineggerlab/folddisco" />
 </a>
